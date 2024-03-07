@@ -180,7 +180,8 @@ for c in color.keys():
 for row in activities.iterrows():
     row_index = row[0]
     row_values = row[1]
-    folium.PolyLine(row_values['map.polyline'], color=color[row_values['type']]).add_to(m)
+    l = folium.PolyLine(row_values['map.polyline'], color=color[row_values['type']])
+    sports[row_values['type']].add_child(l)
     halfway_coord = row_values['map.polyline'][int(len(row_values['map.polyline']) / 2)]
     # popup text
     html = """
@@ -230,7 +231,8 @@ for row in activities.iterrows():
     icon = folium.Icon(color=color[row_values['type']], icon=icons[row_values['type']], icon_color="white", prefix='fa')
 
     marker = folium.Marker(location=halfway_coord, popup=popup, icon=icon)
-    marker.add_to(m)
+    sports[row_values['type']].add_child(marker)
+    # marker.add_to(m)
 
 # Add dark and light mode.
 # folium.TileLayer('cartodbdark_matter', name="dark mode", control=True).add_to(m)
