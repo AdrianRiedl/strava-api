@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import math
+import sys
 import time
 from tqdm import tqdm
 import requests
@@ -41,6 +42,7 @@ def get_data(access_token, per_page=200, page=1):
 
 # download the data from the strava website
 def downloadStravaData():
+    print("Downloading from Strava")
     access_token: str = authorize.get_acces_token()
     max_number_of_pages = 10
     data = list()
@@ -113,133 +115,165 @@ def runPreprocessing(localActivities):
     return localActivities
 
 
-# plot all activities on map
-resolution, width, height = 75, 6, 6.5
+def main(refreshDownload):
+    if not os.path.isfile('activities.csv') or refreshDownload:
+        data_dictionaries = downloadStravaData()
+        # normalize data
+        activities = pd.json_normalize(data_dictionaries)
+        # store it as a csv file
+        activities.to_csv("activities.csv")
+    else:
+        activities = pd.read_csv('activities.csv')
 
-if not os.path.isfile('activities.csv'):
-    data_dictionaries = downloadStravaData()
-    # normalize data
-    activities = pd.json_normalize(data_dictionaries)
-    activities.to_csv("activities.csv")
-else:
-    activities = pd.read_csv('activities.csv')
+    # get the activities
+    def getDelta(cached, new):
+        outer = new.merge(cached, how='outer', on='id', indicator=True)
+        anti = outer[(outer._merge == 'left_only')].drop('_merge', axis=1)
+        return anti
 
+    m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
+    # color scheme
+    settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True},
+                'Run': {'color': 'green', 'icon': 'person', 'process': True},
+                'Hike': {'color': 'purple', 'icon': 'person', 'process': True},
+                'Walk': {'color': 'purple', 'icon': 'person', 'process': True},
+                'Swim': {'color': 'blue', 'icon': 'water', 'process': True}}
+    sports = {}
+    for c in settings.keys():
+        sports[c] = folium.FeatureGroup(name=c)
+        sports[c].add_to(m)
 
-# get the activities
-def getDelta(cached, new):
-    outer = new.merge(cached, how='outer', on='id', indicator=True)
-    anti = outer[(outer._merge == 'left_only')].drop('_merge', axis=1)
-    return anti
+    # create dictionary with elevation profiles
+    elevation_profile = dict()
 
+    # do some preprocessing
+    activities = activities.dropna(subset=['map.summary_polyline'])
+    activities = runPreprocessing(activities)
 
-m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
-# color scheme
-settings = {'Ride': {'color': 'red', 'icon': 'bicycle'}, 'Run': {'color': 'green', 'icon': 'person'},
-            'Hike': {'color': 'purple', 'icon': 'person'}, 'Walk': {'color': 'purple', 'icon': 'person'},
-            'Swim': {'color': 'blue', 'icon': 'water'}}
-sports = {}
-for c in settings.keys():
-    sports[c] = folium.FeatureGroup(name=c)
-    sports[c].add_to(m)
+    # plot all activities on map
+    resolution, width, height = 75, 6, 6.5
 
-# create dictionary with elevation profiles
-elevation_profile = dict()
+    for row in tqdm(activities.iterrows(), desc="Plotting progress", total=activities.shape[0]):
+        row_index = row[0]
+        row_values = row[1]
+        type = row_values['type']
+        # option to skip specific activity types
+        if not settings[type]['process']:
+            print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as not process set")
+            continue
+        # decode the polyline
+        line = polyline.decode(row_values['map.summary_polyline'])
+        # if the decided line is empty, skip this activity
+        if not line:
+            print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as it is empty")
+            continue
+        # plot the activity and get the elevation
+        # retry for the elevation until success or at most 10 times
+        l = folium.PolyLine(line, color=settings[type]['color'])
+        elevation = []
+        retry = True
+        counter = 0
+        while retry and counter < 10:
+            try:
+                elevation = get_elevation(line)
+                retry = False
+            except:
+                print(f"Retrying for {row_values['id']}")
+                time.sleep(0.2)
+                counter = counter + 1
 
-activities = activities.dropna(subset=['map.summary_polyline'])
-activities = runPreprocessing(activities)
+        sports[type].add_child(l)
+        halfway_coord = line[0]  # line[int(len(line) / 2)]
+        # halfway_coord = line[int(len(line) / 2)]
 
-for row in tqdm(activities.iterrows(), desc="Plotting progress", total=activities.shape[0]):
-    row_index = row[0]
-    row_values = row[1]
-    type = row_values['type']
-    line = polyline.decode(row_values['map.summary_polyline'])
-    l = folium.PolyLine(line, color=settings[type]['color'])
-    elevation = []
-    retry = True
-    while retry:
-        try:
-            elevation = get_elevation(line)
-            retry = False
-        except:
-            print(f"Retrying for {row_values['id']}")
-            time.sleep(0.2)
+        pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
 
-    sports[type].add_child(l)
-    halfway_coord = line[0]  # line[int(len(line) / 2)]
+        if len(elevation) > 0:
+            # plot elevation profile
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax = pd.Series(elevation).rolling(3).mean().plot(
+                ax=ax,
+                color='steelblue',
+                legend=False
+            )
+            ax.set_ylabel('Elevation')
+            ax.axes.xaxis.set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
 
-    pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
+            # make the plot and convert it to base64
+            pic_IObytes = io.BytesIO()
+            plt.savefig(pic_IObytes, format='png', dpi=75)
+            plt.close()
+            pic_IObytes.seek(0)
+            pictureText = base64.b64encode(pic_IObytes.read()).decode()
 
-    if len(elevation) > 0:
-        # plot elevation profile
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax = pd.Series(elevation).rolling(3).mean().plot(
-            ax=ax,
-            color='steelblue',
-            legend=False
+        elevation_profile[row_values['id']] = pictureText
+
+        # popup text
+        html = """
+        <h3>{}</h3>
+            <p>
+                <code>
+                Date : {} <br>
+                Time : {} <br>
+                <a href="https://www.strava.com/activities/{}" target="_blank">Activity</a>
+                </code>
+            </p>
+        <h4>{}</h4>
+            <p>
+                <code>
+                    Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
+                    Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
+                    Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
+                    Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
+                    Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
+                </code>
+            </p>
+            <img src="data:image/png;base64,{}">
+        """.format(
+            row_values['name'],
+            row_index.date(),
+            row_index.time(),
+            row_values['id'],
+            type,
+            row_values['distance'],
+            row_values['total_elevation_gain'],
+            time.strftime('%H:%M:%S', time.gmtime(row_values['moving_time'])),
+            row_values['average_speed'], row_values['max_speed'],
+            makeNaNZero(row_values['average_watts']), makeNaNZero(row_values['max_watts']),
+            elevation_profile[row_values['id']],
         )
-        ax.set_ylabel('Elevation')
-        ax.axes.xaxis.set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
 
-        # make the plot and convert it to base64
-        pic_IObytes = io.BytesIO()
-        plt.savefig(pic_IObytes,  format='png', dpi=75)
-        plt.close()
-        pic_IObytes.seek(0)
-        pictureText = base64.b64encode(pic_IObytes.read()).decode()
+        # add marker to map
+        iframe = folium.IFrame(html, width=(width * resolution) + 20, height=(height * resolution) + 20)
+        popup = folium.Popup(iframe, width=4000)
+        icon = folium.Icon(color=settings[type]['color'],
+                           icon=settings[type]['icon'], icon_color="white", prefix='fa')
 
-    elevation_profile[row_values['id']] = pictureText
+        marker = folium.Marker(location=halfway_coord, popup=popup, icon=icon)
+        sports[type].add_child(marker)
+        time.sleep(0.2)
 
-    # popup text
-    html = """
-    <h3>{}</h3>
-        <p>
-            <code>
-            Date : {} <br>
-            Time : {} <br>
-            <a href="https://www.strava.com/activities/{}" target="_blank">Activity</a>
-            </code>
-        </p>
-    <h4>{}</h4>
-        <p>
-            <code>
-                Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
-                Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
-                Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
-                Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
-                Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
-            </code>
-        </p>
-        <img src="data:image/png;base64,{}">
-    """.format(
-        row_values['name'],
-        row_index.date(),
-        row_index.time(),
-        row_values['id'],
-        type,
-        row_values['distance'],
-        row_values['total_elevation_gain'],
-        time.strftime('%H:%M:%S', time.gmtime(row_values['moving_time'])),
-        row_values['average_speed'], row_values['max_speed'],
-        makeNaNZero(row_values['average_watts']), makeNaNZero(row_values['max_watts']),
-        elevation_profile[row_values['id']],
-    )
+    # Add dark and light mode.
+    # folium.TileLayer('cartodbdark_matter', name="dark mode", control=True).add_to(m)
+    # folium.TileLayer('cartodbpositron', name="light mode", control=True).add_to(m)
 
-    # add marker to map
-    iframe = folium.IFrame(html, width=(width * resolution) + 20, height=(height * resolution) + 20)
-    popup = folium.Popup(iframe, width=4000)
-    icon = folium.Icon(color=settings[type]['color'],
-                       icon=settings[type]['icon'], icon_color="white", prefix='fa')
+    # We add a layer controller.
+    folium.LayerControl(collapsed=True).add_to(m)
+    m.save('route.html')
 
-    marker = folium.Marker(location=halfway_coord, popup=popup, icon=icon)
-    sports[type].add_child(marker)
-    time.sleep(0.2)
 
-# Add dark and light mode.
-# folium.TileLayer('cartodbdark_matter', name="dark mode", control=True).add_to(m)
-# folium.TileLayer('cartodbpositron', name="light mode", control=True).add_to(m)
+def printHelp():
+    print("Usage: python3 main.py [--refresh]")
+    print("It downloads the data from Strava and visualizes it.")
+    print("It only downloads the data if no 'activity.csv' file exists or if the flag '--refresh' is set.")
 
-# We add a layer controller.
-folium.LayerControl(collapsed=True).add_to(m)
-m.save('route.html')
+
+if __name__ == '__main__':
+    if '--help' in sys.argv or '-h' in sys.argv:
+        printHelp()
+        exit(0)
+    refreshDownload = True if '--refresh' in sys.argv else False
+
+    main(refreshDownload)
