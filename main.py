@@ -179,7 +179,7 @@ def main(refreshDownload):
                 retry = False
             except:
                 print(f"Retrying for {row_values['id']}")
-                time.sleep(0.2)
+                time.sleep(1)
                 counter = counter + 1
 
         sports[type].add_child(l)
