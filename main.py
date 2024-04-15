@@ -12,10 +12,9 @@ import polyline
 import os
 import time
 import matplotlib.pyplot as plt
+from folium.plugins import HeatMap
 
-from src.api_methods import get_methods
 from src.api_methods import authorize
-from src.data_preprocessing import main as data_prep
 
 
 # define function to return NaN as 0
@@ -132,6 +131,9 @@ def main(refreshDownload):
         return anti
 
     m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
+    # # add full screen button
+    folium.plugins.Fullscreen().add_to(m)
+
     # color scheme
     settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True},
                 'Run': {'color': 'green', 'icon': 'person', 'process': True},
@@ -139,6 +141,8 @@ def main(refreshDownload):
                 'Walk': {'color': 'purple', 'icon': 'person', 'process': True},
                 'Swim': {'color': 'blue', 'icon': 'water', 'process': True}}
     sports = {}
+    markersGroup = folium.FeatureGroup(name='Show markers')
+    markersGroup.add_to(m)
     for c in settings.keys():
         sports[c] = folium.FeatureGroup(name=c)
         sports[c].add_to(m)
@@ -167,9 +171,8 @@ def main(refreshDownload):
         if not line:
             print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as it is empty")
             continue
-        # plot the activity and get the elevation
+        # get the elevation
         # retry for the elevation until success or at most 10 times
-        l = folium.PolyLine(line, color=settings[type]['color'])
         elevation = []
         retry = True
         counter = 0
@@ -179,12 +182,11 @@ def main(refreshDownload):
                 retry = False
             except:
                 print(f"Retrying for {row_values['id']}")
-                time.sleep(1)
+                time.sleep(5)
                 counter = counter + 1
 
-        sports[type].add_child(l)
-        halfway_coord = line[0]  # line[int(len(line) / 2)]
-        # halfway_coord = line[int(len(line) / 2)]
+        # halfway_coord = line[0]  # line[int(len(line) / 2)]
+        halfway_coord = line[int(len(line) / 2)]
 
         pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
 
@@ -213,22 +215,18 @@ def main(refreshDownload):
         # popup text
         html = """
         <h3>{}</h3>
-            <p>
-                <code>
+            <p style="font-family:'Courier New'" font-size=30px>
                 Date : {} <br>
                 Time : {} <br>
                 <a href="https://www.strava.com/activities/{}" target="_blank">Activity</a>
-                </code>
             </p>
         <h4>{}</h4>
-            <p>
-                <code>
-                    Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
-                    Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
-                    Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
-                    Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
-                    Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
-                </code>
+            <p style="font-family:'Courier New'" font-size=30px>
+                Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
+                Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
+                Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
+                Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
+                Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
             </p>
             <img src="data:image/png;base64,{}">
         """.format(
@@ -246,13 +244,15 @@ def main(refreshDownload):
         )
 
         # add marker to map
-        iframe = folium.IFrame(html, width=(width * resolution) + 20, height=(height * resolution) + 20)
-        popup = folium.Popup(iframe, width=4000)
         icon = folium.Icon(color=settings[type]['color'],
                            icon=settings[type]['icon'], icon_color="white", prefix='fa')
 
-        marker = folium.Marker(location=halfway_coord, popup=popup, icon=icon)
-        sports[type].add_child(marker)
+        # plot the activity
+        l = folium.PolyLine(line, color=settings[type]['color'], popup=html)
+        sports[type].add_child(l)
+
+        marker = folium.Marker(location=halfway_coord, icon=icon)
+        markersGroup.add_child(marker)
         time.sleep(0.2)
 
     # Add dark and light mode.
