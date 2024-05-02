@@ -124,22 +124,21 @@ def main(refreshDownload):
     else:
         activities = pd.read_csv('activities.csv')
 
-    # get the activities
-    def getDelta(cached, new):
-        outer = new.merge(cached, how='outer', on='id', indicator=True)
-        anti = outer[(outer._merge == 'left_only')].drop('_merge', axis=1)
-        return anti
-
     m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
     # # add full screen button
     folium.plugins.Fullscreen().add_to(m)
 
     # color scheme
-    settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True},
-                'Run': {'color': 'green', 'icon': 'person', 'process': True},
-                'Hike': {'color': 'purple', 'icon': 'person', 'process': True},
-                'Walk': {'color': 'purple', 'icon': 'person', 'process': True},
-                'Swim': {'color': 'blue', 'icon': 'water', 'process': True}}
+    settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
+                         'subcategories': {'Ride': 0, 'GravelRide': 10, 'MountainBikeRide': 20}},
+                'Run': {'color': 'green', 'icon': 'person', 'process': True,
+                        'subcategories': {'Run': 0}},
+                'Hike': {'color': 'purple', 'icon': 'person', 'process': True,
+                         'subcategories': {'Hike': 0}},
+                'Walk': {'color': 'purple', 'icon': 'person', 'process': True,
+                         'subcategories': {'Walk': 0}},
+                'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
+                         'subcategories': {'Swim': 0}}}
     sports = {}
     markersGroup = folium.FeatureGroup(name='Show markers')
     markersGroup.add_to(m)
@@ -248,7 +247,10 @@ def main(refreshDownload):
                            icon=settings[type]['icon'], icon_color="white", prefix='fa')
 
         # plot the activity
-        l = folium.PolyLine(line, color=settings[type]['color'], popup=html)
+        if row_values['sport_type'] not in settings[type]['subcategories']:
+            settings[type]['subcategories'][row_values['sport_type']] = 0
+        l = folium.PolyLine(line, color=settings[type]['color'], popup=html,
+                            dash_array=settings[type]['subcategories'][row_values['sport_type']])
         sports[type].add_child(l)
 
         marker = folium.Marker(location=halfway_coord, icon=icon)
@@ -262,6 +264,7 @@ def main(refreshDownload):
     # We add a layer controller.
     folium.LayerControl(collapsed=True).add_to(m)
     m.save('route.html')
+    print(settings)
 
 
 def printHelp():
