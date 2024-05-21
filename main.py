@@ -1,4 +1,5 @@
 import base64
+import collections
 import io
 import json
 import math
@@ -26,12 +27,12 @@ def makeNaNZero(a):
 
 # define function to get your strava data
 def get_data(access_token, per_page=200, page=1):
-    activities_url = 'https://www.strava.com/api/v3/athlete/activities'
+    url = 'https://www.strava.com/api/v3/athlete/activities'
     headers = {'Authorization': 'Bearer ' + access_token}
     params = {'per_page': per_page, 'page': page}
 
     data = requests.get(
-        activities_url,
+        url,
         headers=headers,
         params=params
     ).json()
@@ -39,10 +40,24 @@ def get_data(access_token, per_page=200, page=1):
     return data
 
 
+def get_gear(access_token, id):
+    url = 'https://www.strava.com/api/v3/gear/' + id
+    headers = {'Authorization': 'Bearer ' + access_token}
+
+    data = requests.get(
+        url,
+        headers=headers
+    ).json()
+
+    return data
+
+
+access_token: str = authorize.get_acces_token()
+
+
 # download the data from the strava website
 def downloadStravaData():
     print("Downloading from Strava")
-    access_token: str = authorize.get_acces_token()
     max_number_of_pages = 10
     data = list()
     for page_number in tqdm(range(1, max_number_of_pages + 1)):
@@ -153,6 +168,9 @@ def main(refreshDownload):
     activities = activities.dropna(subset=['map.summary_polyline'])
     activities = runPreprocessing(activities)
 
+    gearDistanceMap = collections.defaultdict(lambda: collections.defaultdict(float))
+    gearMap = {}
+
     # plot all activities on map
     resolution, width, height = 75, 6, 6.5
 
@@ -160,6 +178,17 @@ def main(refreshDownload):
         row_index = row[0]
         row_values = row[1]
         type = row_values['type']
+
+        year = row[0].year
+
+        # query the gear if present and not yet known
+        if isinstance(row_values['gear_id'], str):
+            gear = row_values['gear_id']
+            gearDistanceMap[gear][year] += float(row_values['distance'])
+            if gear not in gearMap:
+                gearMap[gear] = get_gear(access_token, gear)
+
+
         # option to skip specific activity types
         if not settings[type]['process']:
             print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as not process set")
@@ -262,10 +291,21 @@ def main(refreshDownload):
     # folium.TileLayer('cartodbpositron', name="light mode", control=True).add_to(m)
 
     # We add a layer controller.
-    folium.LayerControl(collapsed=True).add_to(m)
+    folium.LayerControl(collapsed=False).add_to(m)
     m.save('route.html')
     print(settings)
-
+    print(gearDistanceMap)
+    print(gearMap)
+    # now query the gear:
+    for g in gearDistanceMap.keys():
+        print(f"For gear {gearMap[g]['nickname']}:")
+        l = []
+        for year in gearDistanceMap[g].keys():
+            l.append((year, gearDistanceMap[g][year]))
+        l.sort(key=lambda tup: tup[0])
+        for e in l:
+            print(f"{e[0]}: {e[1]}")
+        print("-----------------------------")
 
 def printHelp():
     print("Usage: python3 main.py [--refresh]")
