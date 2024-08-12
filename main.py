@@ -4,7 +4,6 @@ import io
 import json
 import math
 import sys
-import time
 from tqdm import tqdm
 import requests
 import pandas as pd
@@ -14,15 +13,14 @@ import os
 import time
 import matplotlib.pyplot as plt
 from folium.plugins import HeatMap
+from tabulate import tabulate
 
 from src.api_methods import authorize
 
 
 # define function to return NaN as 0
 def makeNaNZero(a):
-    if math.isnan(a):
-        return 0
-    return a
+    return a if math.isnan(a) else 0
 
 
 # define function to get your strava data
@@ -30,26 +28,13 @@ def get_data(access_token, per_page=200, page=1):
     url = 'https://www.strava.com/api/v3/athlete/activities'
     headers = {'Authorization': 'Bearer ' + access_token}
     params = {'per_page': per_page, 'page': page}
-
-    data = requests.get(
-        url,
-        headers=headers,
-        params=params
-    ).json()
-
-    return data
+    return requests.get(url, headers=headers, params=params).json()
 
 
 def get_gear(access_token, id):
     url = 'https://www.strava.com/api/v3/gear/' + id
     headers = {'Authorization': 'Bearer ' + access_token}
-
-    data = requests.get(
-        url,
-        headers=headers
-    ).json()
-
-    return data
+    return requests.get(url, headers=headers).json()
 
 
 access_token: str = authorize.get_acces_token()
@@ -77,31 +62,28 @@ def downloadStravaData():
 
 # resolve the points to their elevation above sea level
 def get_elevation(vec):
-    payload = {'locations': []}
-    for latitude, longitude in vec:
-        payload['locations'].append({"latitude": latitude, "longitude": longitude})
+    payload = {'locations': [{"latitude": lat, "longitude": lon} for lat, lon in vec]}
     r = requests.post(url="https://api.open-elevation.com/api/v1/lookup",
                       headers={
                           "Accept": "application/json",
                           "Content-Type": "application/json; charset=utf-8",
                       },
                       data=json.dumps(payload)).json()
-    return [] if 'results' not in r else [entry['elevation'] for entry in r['results']]
+    return [entry['elevation'] for entry in r.get('results', [])]
 
 
-def runPreprocessing(localActivities):
+def runPreprocessing(activities):
     # convert data types
-    localActivities.loc[:, 'start_date'] = pd.to_datetime(localActivities['start_date']).dt.tz_localize(None)
-    localActivities.loc[:, 'start_date_local'] = pd.to_datetime(localActivities['start_date_local']).dt.tz_localize(
-        None)
+    activities.loc[:, 'start_date'] = pd.to_datetime(activities['start_date']).dt.tz_localize(None)
+    activities.loc[:, 'start_date_local'] = pd.to_datetime(activities['start_date_local']).dt.tz_localize(None)
     # convert values
-    localActivities.loc[:, 'distance'] /= 1000  # convert from m to km
-    localActivities.loc[:, 'average_speed'] *= 3.6  # convert from m/s to km/h
-    localActivities.loc[:, 'max_speed'] *= 3.6  # convert from m/s to km/h
+    activities.loc[:, 'distance'] /= 1000  # convert from m to km
+    activities.loc[:, 'average_speed'] *= 3.6  # convert from m/s to km/h
+    activities.loc[:, 'max_speed'] *= 3.6  # convert from m/s to km/h
     # set index
-    localActivities.set_index('start_date_local', inplace=True)
+    activities.set_index('start_date_local', inplace=True)
     # drop columns
-    localActivities.drop(
+    activities.drop(
         [
             'resource_state',
             'external_id',
@@ -126,7 +108,7 @@ def runPreprocessing(localActivities):
         axis=1,
         inplace=True
     )
-    return localActivities
+    return activities
 
 
 def main(refreshDownload):
@@ -168,11 +150,10 @@ def main(refreshDownload):
     activities = activities.dropna(subset=['map.summary_polyline'])
     activities = runPreprocessing(activities)
 
-    gearDistanceMap = collections.defaultdict(lambda: collections.defaultdict(float))
+    # map of gear to year to month to distance and elevationl
+    gearDistanceElevationMap = collections.defaultdict(
+        lambda: collections.defaultdict(lambda: collections.defaultdict(lambda: (0.0, 0.0))))
     gearMap = {}
-
-    # plot all activities on map
-    resolution, width, height = 75, 6, 6.5
 
     for row in tqdm(activities.iterrows(), desc="Plotting progress", total=activities.shape[0]):
         row_index = row[0]
@@ -180,14 +161,16 @@ def main(refreshDownload):
         type = row_values['type']
 
         year = row[0].year
+        month = row[0].month
 
         # query the gear if present and not yet known
         if isinstance(row_values['gear_id'], str):
             gear = row_values['gear_id']
-            gearDistanceMap[gear][year] += float(row_values['distance'])
+            gearDistanceElevationMap[gear][year][month] = (
+                gearDistanceElevationMap[gear][year][month][0] + float(row_values['distance']),
+                gearDistanceElevationMap[gear][year][month][1] + float(row_values['total_elevation_gain']))
             if gear not in gearMap:
                 gearMap[gear] = get_gear(access_token, gear)
-
 
         # option to skip specific activity types
         if not settings[type]['process']:
@@ -294,18 +277,60 @@ def main(refreshDownload):
     folium.LayerControl(collapsed=False).add_to(m)
     m.save('route.html')
     print(settings)
-    print(gearDistanceMap)
+    print(gearDistanceElevationMap)
     print(gearMap)
-    # now query the gear:
-    for g in gearDistanceMap.keys():
-        print(f"For gear {gearMap[g]['nickname']}:")
-        l = []
-        for year in gearDistanceMap[g].keys():
-            l.append((year, gearDistanceMap[g][year]))
-        l.sort(key=lambda tup: tup[0])
+
+    text = ""
+
+    gearToTable = {}
+
+    def mapToMonth(month):
+        assert 1 <= month <= 12
+        month_map = {
+            1: "January",
+            2: "February",
+            3: "March",
+            4: "April",
+            5: "May",
+            6: "June",
+            7: "July",
+            8: "August",
+            9: "September",
+            10: "October",
+            11: "November",
+            12: "December"
+        }
+        return month_map[month]
+
+    for gear, years in gearDistanceElevationMap.items():
+        if gear not in gearToTable:
+            gearToTable[gear] = []
+        for year, months in years.items():
+            for month, (dist, elev) in months.items():
+                gearToTable[gear].append([year, mapToMonth(month), dist, elev])
+
+    print(gearToTable)
+
+    for gear, l in gearToTable.items():
+        text += "------------------------------------------------------------------------\n"
+        text += f"For {gearMap[gear]["nickname"]}:\n"
+        yearMap = collections.defaultdict(lambda: (0.0, 0.0))
         for e in l:
-            print(f"{e[0]}: {e[1]}")
-        print("-----------------------------")
+            year = e[0]
+            distance = e[2]
+            elevation = e[3]
+            yearMap[year] = (yearMap[year][0] + distance, yearMap[year][1] + elevation)
+        subTable = []
+        for year, (d, e) in yearMap.items():
+            subTable.append([year, d, e])
+        text += tabulate(subTable, headers=['Year', 'Distance', 'Elevation'], tablefmt='github') + "\n"
+        text += "-------------------------------------------------\n"
+        text += tabulate(l, headers=['Year', 'Month', 'Distance', 'Elevation'], tablefmt='github') + "\n"
+
+    print(text)
+    with open("into.txt", 'w') as f:
+        f.write(text)
+
 
 def printHelp():
     print("Usage: python3 main.py [--refresh]")
