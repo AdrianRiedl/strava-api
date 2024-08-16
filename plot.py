@@ -1,5 +1,6 @@
 import base64
 import collections
+import datetime
 import io
 import json
 import math
@@ -14,7 +15,7 @@ import time
 import matplotlib.pyplot as plt
 from folium.plugins import HeatMap
 from tabulate import tabulate
-
+import argparse
 from src.api_methods import authorize
 
 
@@ -111,7 +112,7 @@ def runPreprocessing(activities):
     return activities
 
 
-def main(refreshDownload):
+def getData(refreshDownload):
     if not os.path.isfile('activities.csv') or refreshDownload:
         data_dictionaries = downloadStravaData()
         # normalize data
@@ -120,22 +121,47 @@ def main(refreshDownload):
         activities.to_csv("activities.csv")
     else:
         activities = pd.read_csv('activities.csv')
+    return activities
+
+
+def filterActivities(activities, date, activityTypes):
+    # build the filter for the activities
+    activityTypeFilter = '' if activityTypes is None else ' | '.join([f'sport_type == \'{a}\'' for a in activityTypes])
+    # build the filter for the date
+    dateFilter = '' if date is None else f'start_date >= \"{date}\"'
+    # join the filter
+    f = ' & '.join(filter(None, [activityTypeFilter, dateFilter]))
+    print(f"The filter is \"{f}\".")
+    # apply the filter
+    if not f:
+        return activities
+    return activities.query(f)
+
+
+# color scheme
+settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
+                     'subcategories': {'Ride': 0, 'GravelRide': 10, 'MountainBikeRide': 20}},
+            'Run': {'color': 'green', 'icon': 'person', 'process': True,
+                    'subcategories': {'Run': 0}},
+            'Hike': {'color': 'purple', 'icon': 'person', 'process': True,
+                     'subcategories': {'Hike': 0}},
+            'Walk': {'color': 'purple', 'icon': 'person', 'process': True,
+                     'subcategories': {'Walk': 0}},
+            'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
+                     'subcategories': {'Swim': 0}}}
+
+# get the available subcategories
+activityTypes = [subcat for details in settings.values() for subcat in details.get('subcategories', {}).keys()]
+
+
+def main(args):
+    activities = getData(args.refresh)
+    activities = filterActivities(activities, args.since, args.type)
 
     m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
     # # add full screen button
     folium.plugins.Fullscreen().add_to(m)
 
-    # color scheme
-    settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
-                         'subcategories': {'Ride': 0, 'GravelRide': 10, 'MountainBikeRide': 20}},
-                'Run': {'color': 'green', 'icon': 'person', 'process': True,
-                        'subcategories': {'Run': 0}},
-                'Hike': {'color': 'purple', 'icon': 'person', 'process': True,
-                         'subcategories': {'Hike': 0}},
-                'Walk': {'color': 'purple', 'icon': 'person', 'process': True,
-                         'subcategories': {'Walk': 0}},
-                'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
-                         'subcategories': {'Swim': 0}}}
     sports = {}
     markersGroup = folium.FeatureGroup(name='Show markers')
     markersGroup.add_to(m)
@@ -192,7 +218,7 @@ def main(refreshDownload):
                 elevation = get_elevation(line)
                 retry = False
             except:
-                print(f"Retrying for {row_values['id']}")
+                print(f"Retrying elevation for {row_values['id']}")
                 time.sleep(5)
                 counter = counter + 1
 
@@ -275,7 +301,8 @@ def main(refreshDownload):
 
     # We add a layer controller.
     folium.LayerControl(collapsed=False).add_to(m)
-    m.save('route.html')
+    if not args.noPlot:
+        m.save('route.html')
     print(settings)
     print(gearDistanceElevationMap)
     print(gearMap)
@@ -338,10 +365,19 @@ def printHelp():
     print("It only downloads the data if no 'activity.csv' file exists or if the flag '--refresh' is set.")
 
 
-if __name__ == '__main__':
-    if '--help' in sys.argv or '-h' in sys.argv:
-        printHelp()
-        exit(0)
-    refreshDownload = True if '--refresh' in sys.argv else False
 
-    main(refreshDownload)
+if __name__ == '__main__':
+    # Instantiate the parser
+    parser = argparse.ArgumentParser(
+        prog='plot.py',
+        description='Plot the routes from Strava')
+
+    parser.add_argument('-s', '--since',
+                        type=lambda s: datetime.datetime.strptime(s, '%Y-%m-%d'))  # option that takes a value
+    parser.add_argument('-t', '--type', choices=activityTypes, action='append')  # option that takes a value
+    parser.add_argument('-r', '--refresh', action='store_true')  # on/off flag
+    parser.add_argument('--noPlot', action='store_true')  # on/off flag
+    args = parser.parse_args()
+    print(args.since, args.type, args.refresh)
+
+    main(args)
