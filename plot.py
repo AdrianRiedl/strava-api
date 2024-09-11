@@ -124,13 +124,16 @@ def getData(refreshDownload):
     return activities
 
 
-def filterActivities(activities, date, activityTypes):
+def filterActivities(activities, sinceDate, untilDate, activityTypes):
+    # update the until timestamp to the last possible one of the day
+    untilDate = untilDate if untilDate is None else untilDate.replace(hour=23, minute=59, second=59)
     # build the filter for the activities
     activityTypeFilter = '' if activityTypes is None else ' | '.join([f'sport_type == \'{a}\'' for a in activityTypes])
     # build the filter for the date
-    dateFilter = '' if date is None else f'start_date >= \"{date}\"'
+    sinceDataFilter = '' if sinceDate is None else f'(start_date >= \"{sinceDate}\")'
+    untilDataFilter = '' if untilDate is None else f'(start_date <= \"{untilDate}\")'
     # join the filter
-    f = ' & '.join(filter(None, [activityTypeFilter, dateFilter]))
+    f = ' & '.join(filter(None, [activityTypeFilter, sinceDataFilter, untilDataFilter]))
     print(f"The filter is \"{f}\".")
     # apply the filter
     if not f:
@@ -156,7 +159,7 @@ activityTypes = [subcat for details in settings.values() for subcat in details.g
 
 def main(args):
     activities = getData(args.refresh)
-    activities = filterActivities(activities, args.since, args.type)
+    activities = filterActivities(activities, args.since, args.until, args.type)
 
     m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
     # # add full screen button
@@ -301,8 +304,10 @@ def main(args):
 
     # We add a layer controller.
     folium.LayerControl(collapsed=False).add_to(m)
+
+    formatDate = lambda date: '' if date is None else date.strftime('%Y-%m-%d')
     if not args.noPlot:
-        m.save('route.html')
+        m.save(f'route{formatDate(args.since)}{formatDate(args.until)}.html')
     print(settings)
     print(gearDistanceElevationMap)
     print(gearMap)
@@ -365,14 +370,15 @@ def printHelp():
     print("It only downloads the data if no 'activity.csv' file exists or if the flag '--refresh' is set.")
 
 
-
 if __name__ == '__main__':
     # Instantiate the parser
     parser = argparse.ArgumentParser(
         prog='plot.py',
         description='Plot the routes from Strava')
 
-    parser.add_argument('-s', '--since',
+    parser.add_argument('-s', '--since', metavar='YYYY-mm-dd',
+                        type=lambda s: datetime.datetime.strptime(s, '%Y-%m-%d'))  # option that takes a value
+    parser.add_argument('-u', '--until', metavar='YYYY-mm-dd',
                         type=lambda s: datetime.datetime.strptime(s, '%Y-%m-%d'))  # option that takes a value
     parser.add_argument('-t', '--type', choices=activityTypes, action='append')  # option that takes a value
     parser.add_argument('-r', '--refresh', action='store_true')  # on/off flag
