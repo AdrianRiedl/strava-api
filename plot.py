@@ -24,17 +24,25 @@ def makeNaNZero(a):
     return a if math.isnan(a) else 0
 
 
-# define function to get your strava data
+# get your strava data
 def get_data(access_token, per_page=200, page=1):
     url = 'https://www.strava.com/api/v3/athlete/activities'
-    headers = {'Authorization': 'Bearer ' + access_token}
+    headers = {'Authorization': f'Bearer {access_token}'}
     params = {'per_page': per_page, 'page': page}
     return requests.get(url, headers=headers, params=params).json()
 
 
+# get the gear with specific id
 def get_gear(access_token, id):
-    url = 'https://www.strava.com/api/v3/gear/' + id
-    headers = {'Authorization': 'Bearer ' + access_token}
+    url = f'https://www.strava.com/api/v3/gear/{id}'
+    headers = {'Authorization': f'Bearer {access_token}'}
+    return requests.get(url, headers=headers).json()
+
+
+# get the activity with specific id
+def get_activity(access_token, id):
+    url = f'https://www.strava.com/api/v3/activities/{id}'
+    headers = {'Authorization': f'Bearer {access_token}'}
     return requests.get(url, headers=headers).json()
 
 
@@ -382,6 +390,7 @@ if __name__ == '__main__':
                         type=lambda s: datetime.datetime.strptime(s, '%Y-%m-%d'))  # option that takes a value
     parser.add_argument('-t', '--type', choices=activityTypes, action='append')  # option that takes a value
     parser.add_argument('-r', '--refresh', action='store_true')  # on/off flag
+    # parser.add_argument('-e', '--exact', action='store_true')  # on/off flag
     parser.add_argument('--noPlot', action='store_true')  # on/off flag
     args = parser.parse_args()
     print(args.since, args.type, args.refresh)
