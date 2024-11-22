@@ -287,7 +287,7 @@ def main(args):
             row_values['total_elevation_gain'],
             time.strftime('%H:%M:%S', time.gmtime(row_values['moving_time'])),
             row_values['average_speed'], row_values['max_speed'],
-            makeNaNZero(row_values['average_watts']), makeNaNZero(row_values['max_watts']),
+            makeNaNZero(row_values.get('average_watts', 0)), makeNaNZero(row_values.get('max_watts', 0)),
             elevation_profile[row_values['id']],
         )
 
