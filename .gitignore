@@ -20,6 +20,7 @@ venv/
 
 # Editor-specific files
 .vscode/
+.idea/
 *.swp
 *.swo
 
