@@ -34,3 +34,7 @@ node_modules/
 .pytest_cache
 
 *.csv
+
+garmin_connect_export/
+route.html
+into.txt
