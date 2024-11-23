@@ -165,33 +165,7 @@ settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
 activityTypes = [subcat for details in settings.values() for subcat in details.get('subcategories', {}).keys()]
 
 
-def main(args):
-    activities = getData(args.refresh)
-    activities = filterActivities(activities, args.since, args.until, args.type)
-
-    m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
-    # # add full screen button
-    folium.plugins.Fullscreen().add_to(m)
-
-    sports = {}
-    markersGroup = folium.FeatureGroup(name='Show markers')
-    markersGroup.add_to(m)
-    for c in settings.keys():
-        sports[c] = folium.FeatureGroup(name=c)
-        sports[c].add_to(m)
-
-    # create dictionary with elevation profiles
-    elevation_profile = dict()
-
-    # do some preprocessing
-    activities = activities.dropna(subset=['map.summary_polyline'])
-    activities = runPreprocessing(activities)
-
-    # map of gear to year to month to distance and elevationl
-    gearDistanceElevationMap = collections.defaultdict(
-        lambda: collections.defaultdict(lambda: collections.defaultdict(lambda: (0.0, 0.0))))
-    gearMap = {}
-
+def genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports):
     for row in tqdm(activities.iterrows(), desc="Plotting progress", total=activities.shape[0]):
         row_index = row[0]
         row_values = row[1]
@@ -235,6 +209,7 @@ def main(args):
 
         # halfway_coord = line[0]  # line[int(len(line) / 2)]
         halfway_coord = line[int(len(line) / 2)]
+        print(elevation)
 
         pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
 
@@ -305,6 +280,36 @@ def main(args):
         marker = folium.Marker(location=halfway_coord, icon=icon)
         markersGroup.add_child(marker)
         time.sleep(0.2)
+
+
+def main(args):
+    activities = getData(args.refresh)
+    activities = filterActivities(activities, args.since, args.until, args.type)
+
+    m = folium.Map(location=(48.1372, 11.5755), zoom_start=4)
+    # # add full screen button
+    folium.plugins.Fullscreen().add_to(m)
+
+    sports = {}
+    markersGroup = folium.FeatureGroup(name='Show markers')
+    markersGroup.add_to(m)
+    for c in settings.keys():
+        sports[c] = folium.FeatureGroup(name=c)
+        sports[c].add_to(m)
+
+    # create dictionary with elevation profiles
+    elevation_profile = dict()
+
+    # do some preprocessing
+    activities = activities.dropna(subset=['map.summary_polyline'])
+    activities = runPreprocessing(activities)
+
+    # map of gear to year to month to distance and elevationl
+    gearDistanceElevationMap = collections.defaultdict(
+        lambda: collections.defaultdict(lambda: collections.defaultdict(lambda: (0.0, 0.0))))
+    gearMap = {}
+
+    genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports)
 
     # Add dark and light mode.
     # folium.TileLayer('cartodbdark_matter', name="dark mode", control=True).add_to(m)
