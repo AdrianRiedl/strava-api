@@ -17,7 +17,8 @@ from folium.plugins import HeatMap
 from tabulate import tabulate
 import argparse
 from src.api_methods import authorize
-
+import gpxpy
+import haversine as hs
 
 # define function to return NaN as 0
 def makeNaNZero(a):
@@ -284,6 +285,120 @@ def genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, eleva
         markersGroup.add_child(marker)
         time.sleep(0.2)
 
+def parse_gpx(file_path):
+    # parse gpx file to pandas dataframe
+    gpx = gpxpy.parse(open(file_path), version='1.0')
+
+    data = []
+    points = []
+    for track in gpx.tracks:
+        for segment in track.segments:
+            for point_idx, point in enumerate(segment.points):
+                points.append(tuple([point.latitude, point.longitude]))
+
+                # calculate distances between points
+                if point_idx == 0:
+                    distance = float('NaN')
+                else:
+                    distance = hs.haversine(
+                        point1=points[point_idx-1],
+                        point2=points[point_idx],
+                        unit=hs.Unit.METERS
+                    )
+
+                data.append([point.longitude, point.latitude,point.elevation, point.time, segment.get_speed(point_idx), distance])
+
+    columns = ['Longitude', 'Latitude', 'Elevation', 'Time', 'Speed', 'Distance']
+    gpx_df = pd.DataFrame(data, columns=columns)
+
+    return points, gpx_df
+
+def genGarmin(sports, markersGroup):
+    summaryCSV = '/home/stefan/data/arbeit/dev/strava-api-adrian/tmp/garmin-connect-export/2024-11-22_garmin_connect_export/activities.csv'
+    summaryDF = pd.read_csv(summaryCSV)
+    print(summaryDF)
+    print('-----------')
+
+    path = '/home/stefan/data/arbeit/dev/strava-api-adrian/tmp/garmin-connect-export/2024-11-22_garmin_connect_export/activity_17597667214.gpx'
+    activityID = 17597667214
+
+    points, gpx_df = parse_gpx(path)
+    halfway_coord = points[int(len(points) / 2)]
+    matchingRow = summaryDF.loc[summaryDF['Activity ID'] == activityID]
+
+    type = matchingRow['Activity Type'][0]
+    activityStartTime = datetime.datetime.fromisoformat(matchingRow['Start Time'][0])
+
+    pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
+    if True:
+        # plot elevation profile
+        rolling_elevation = gpx_df['Elevation'].rolling(3).mean()
+        gpx_df['Cumulative Distance'] = gpx_df['Distance'].cumsum() / 1000.
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(gpx_df['Cumulative Distance'], rolling_elevation, color='steelblue')
+
+        ax.set_ylabel('Elevation')
+        ax.set_xlabel('Distance [km]')
+        # ax.axes.xaxis.set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+        # make the plot and convert it to base64
+        pic_IObytes = io.BytesIO()
+        plt.savefig(pic_IObytes, format='png', dpi=75)
+        plt.close()
+        pic_IObytes.seek(0)
+        pictureText = base64.b64encode(pic_IObytes.read()).decode()
+
+    # popup text
+    html = """
+        <h3>{}</h3>
+            <p style="font-family:'Courier New'" font-size=30px>
+                Date : {} <br>
+                Time : {} <br>
+                <a href="https://connect.garmin.com/modern/activity/{}" target="_blank">Activity</a>
+            </p>
+        <h4>{}</h4>
+            <p style="font-family:'Courier New'" font-size=30px>
+                Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
+                Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
+                Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
+                Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
+                Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
+            </p>
+            <img src="data:image/png;base64,{}">
+        """.format(
+        matchingRow['Activity Name'][0],
+        activityStartTime.strftime("%d.%m.%Y"),
+        activityStartTime.strftime("%H:%M:%S"),
+        activityID, # row_values['id'],
+        type,
+        float(matchingRow['Distance (km)'][0]),
+        float(matchingRow['Elevation Gain (m)'][0]),
+        matchingRow['Moving Duration (h:m:s)'][0],
+        float(matchingRow['Average Speed (km/h)']),
+        float(matchingRow['Max. Speed (km/h)']),
+        0, 0,
+        pictureText
+    )
+
+    # add marker to map
+    icon = folium.Icon(color=settings['Ride']['color'],
+                       icon=settings['Ski']['icon'], icon_color="white", prefix='fa')
+
+    # plot the activity
+    # if row_values['sport_type'] not in settings[type]['subcategories']:
+    #     settings[type]['subcategories'][row_values['sport_type']] = 0
+    l = folium.PolyLine(points, color=settings['Ride']['color'], popup=html,
+                        dash_array=settings['Ride']['subcategories']['Ride'])
+
+    sports['Ride'].add_child(l)
+    marker = folium.Marker(location=halfway_coord, icon=icon)
+    markersGroup.add_child(marker)
+
+    # time.sleep(0.2)
+
 
 def main(args):
     activities = getData(args.refresh)
@@ -312,7 +427,8 @@ def main(args):
         lambda: collections.defaultdict(lambda: collections.defaultdict(lambda: (0.0, 0.0))))
     gearMap = {}
 
-    genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports)
+    # genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports)
+    genGarmin(sports, markersGroup)
 
     # Add dark and light mode.
     # folium.TileLayer('cartodbdark_matter', name="dark mode", control=True).add_to(m)
