@@ -159,7 +159,10 @@ settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
             'Walk': {'color': 'purple', 'icon': 'person', 'process': True,
                      'subcategories': {'Walk': 0}},
             'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
-                     'subcategories': {'Swim': 0}}}
+                     'subcategories': {'Swim': 0}},
+            'Ski': {'color': 'orange', 'icon': 'person-skiing', 'process': True,
+                    'subcategories': {'Ski': 0}},
+            }
 
 # get the available subcategories
 activityTypes = [subcat for details in settings.values() for subcat in details.get('subcategories', {}).keys()]
