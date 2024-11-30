@@ -5,6 +5,9 @@ import io
 import json
 import math
 import sys
+import matplotlib
+matplotlib.use('Agg')
+
 from tqdm import tqdm
 import requests
 import pandas as pd
@@ -19,6 +22,7 @@ import argparse
 from src.api_methods import authorize
 import gpxpy
 import haversine as hs
+from routeInfo import RouteInfo, settings
 
 # define function to return NaN as 0
 def makeNaNZero(a):
@@ -150,53 +154,50 @@ def filterActivities(activities, sinceDate, untilDate, activityTypes):
     return activities.query(f)
 
 
-# color scheme
-settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
-                     'subcategories': {'Ride': 0, 'GravelRide': 10, 'MountainBikeRide': 20}},
-            'Run': {'color': 'green', 'icon': 'person', 'process': True,
-                    'subcategories': {'Run': 0}},
-            'Hike': {'color': 'purple', 'icon': 'person', 'process': True,
-                     'subcategories': {'Hike': 0}},
-            'Walk': {'color': 'purple', 'icon': 'person', 'process': True,
-                     'subcategories': {'Walk': 0}},
-            'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
-                     'subcategories': {'Swim': 0}},
-            'Ski': {'color': 'orange', 'icon': 'person-skiing', 'process': True,
-                    'subcategories': {'Ski': 0}},
-            }
-
 # get the available subcategories
 activityTypes = [subcat for details in settings.values() for subcat in details.get('subcategories', {}).keys()]
 
 
-def genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports):
+def genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMap, gearMap):
     for row in tqdm(activities.iterrows(), desc="Plotting progress", total=activities.shape[0]):
-        row_index = row[0]
         row_values = row[1]
-        type = row_values['type']
 
-        year = row[0].year
-        month = row[0].month
+        # decode the polyline
+        line = polyline.decode(row_values['map.summary_polyline'])
+
+        tour_info = RouteInfo(
+            row_values['name'],
+            row_values['id'],
+            'Strava',
+            row_values['type'],
+            row_values['sport_type'],
+            row[0],
+            line,
+            row_values['distance'],
+            row_values['total_elevation_gain'],
+            datetime.timedelta(seconds=row_values['moving_time']),
+            row_values['average_speed'],
+            row_values['max_speed'],
+            row_values.get('average_watts', 0),
+            row_values.get('max_watts', 0),
+        )
 
         # query the gear if present and not yet known
         if isinstance(row_values['gear_id'], str):
             gear = row_values['gear_id']
-            gearDistanceElevationMap[gear][year][month] = (
-                gearDistanceElevationMap[gear][year][month][0] + float(row_values['distance']),
-                gearDistanceElevationMap[gear][year][month][1] + float(row_values['total_elevation_gain']))
+            gearDistanceElevationMap[gear][tour_info.get_year()][tour_info.get_month()] = (
+                gearDistanceElevationMap[gear][tour_info.get_year()][tour_info.get_month()][0] + float(row_values['distance']),
+                gearDistanceElevationMap[gear][tour_info.get_year()][tour_info.get_month()][1] + float(row_values['total_elevation_gain']))
             if gear not in gearMap:
                 gearMap[gear] = get_gear(access_token, gear)
 
-        # option to skip specific activity types
-        if not settings[type]['process']:
-            print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as not process set")
+        if not tour_info.process_tour():
+            print(f'\n{tour_info.get_debug_description()}: skipping as set as "not process"')
             continue
-        # decode the polyline
-        line = polyline.decode(row_values['map.summary_polyline'])
-        # if the decided line is empty, skip this activity
-        if not line:
-            print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as it is empty")
+        if not tour_info.line:
+            print(f'\n{tour_info.get_debug_description()}: skipping as no .gpx line found"')
             continue
+
         # get the elevation
         # retry for the elevation until success or at most 10 times
         elevation = []
@@ -204,86 +205,22 @@ def genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, eleva
         counter = 0
         while retry and counter < 10:
             try:
-                elevation = get_elevation(line)
+                elevation = get_elevation(tour_info.line)
                 retry = False
             except:
                 print(f"Retrying elevation for {row_values['id']}")
                 time.sleep(5)
                 counter = counter + 1
 
-        # halfway_coord = line[0]  # line[int(len(line) / 2)]
-        halfway_coord = line[int(len(line) / 2)]
-        print(elevation)
+        if len(elevation) > 0: # plot elevation profile
+            rolling_elevation = pd.Series(elevation).rolling(3).mean()
+            tour_info.gen_elevation_profile(rolling_elevation)
 
-        pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
+        sports[tour_info.activity_type].add_child(tour_info.gen_polyline())
+        markersGroup.add_child(tour_info.gen_marker())
 
-        if len(elevation) > 0:
-            # plot elevation profile
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax = pd.Series(elevation).rolling(3).mean().plot(
-                ax=ax,
-                color='steelblue',
-                legend=False
-            )
-            ax.set_ylabel('Elevation')
-            ax.axes.xaxis.set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-
-            # make the plot and convert it to base64
-            pic_IObytes = io.BytesIO()
-            plt.savefig(pic_IObytes, format='png', dpi=75)
-            plt.close()
-            pic_IObytes.seek(0)
-            pictureText = base64.b64encode(pic_IObytes.read()).decode()
-
-        elevation_profile[row_values['id']] = pictureText
-
-        # popup text
-        html = """
-        <h3>{}</h3>
-            <p style="font-family:'Courier New'" font-size=30px>
-                Date : {} <br>
-                Time : {} <br>
-                <a href="https://www.strava.com/activities/{}" target="_blank">Activity</a>
-            </p>
-        <h4>{}</h4>
-            <p style="font-family:'Courier New'" font-size=30px>
-                Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
-                Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
-                Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
-                Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
-                Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
-            </p>
-            <img src="data:image/png;base64,{}">
-        """.format(
-            row_values['name'],
-            row_index.date(),
-            row_index.time(),
-            row_values['id'],
-            type,
-            row_values['distance'],
-            row_values['total_elevation_gain'],
-            time.strftime('%H:%M:%S', time.gmtime(row_values['moving_time'])),
-            row_values['average_speed'], row_values['max_speed'],
-            makeNaNZero(row_values.get('average_watts', 0)), makeNaNZero(row_values.get('max_watts', 0)),
-            elevation_profile[row_values['id']],
-        )
-
-        # add marker to map
-        icon = folium.Icon(color=settings[type]['color'],
-                           icon=settings[type]['icon'], icon_color="white", prefix='fa')
-
-        # plot the activity
-        if row_values['sport_type'] not in settings[type]['subcategories']:
-            settings[type]['subcategories'][row_values['sport_type']] = 0
-        l = folium.PolyLine(line, color=settings[type]['color'], popup=html,
-                            dash_array=settings[type]['subcategories'][row_values['sport_type']])
-        sports[type].add_child(l)
-
-        marker = folium.Marker(location=halfway_coord, icon=icon)
-        markersGroup.add_child(marker)
         time.sleep(0.2)
+        break
 
 def parse_gpx(file_path):
     # parse gpx file to pandas dataframe
@@ -313,6 +250,14 @@ def parse_gpx(file_path):
 
     return points, gpx_df
 
+def get_timedelta(time_string):
+    time_object = datetime.datetime.strptime(time_string, "%H:%M:%S")
+    return datetime.timedelta(
+        hours=time_object.hour,
+        minutes=time_object.minute,
+        seconds=time_object.second
+    )
+
 def genGarmin(sports, markersGroup):
     summaryCSV = '/home/stefan/data/arbeit/dev/strava-api-adrian/tmp/garmin-connect-export/2024-11-22_garmin_connect_export/activities.csv'
     summaryDF = pd.read_csv(summaryCSV)
@@ -323,81 +268,41 @@ def genGarmin(sports, markersGroup):
     activityID = 17597667214
 
     points, gpx_df = parse_gpx(path)
-    halfway_coord = points[int(len(points) / 2)]
-    matchingRow = summaryDF.loc[summaryDF['Activity ID'] == activityID]
+    matching_row = summaryDF.loc[summaryDF['Activity ID'] == activityID]
 
-    type = matchingRow['Activity Type'][0]
-    activityStartTime = datetime.datetime.fromisoformat(matchingRow['Start Time'][0])
-
-    pictureText = 'iVBORw0KGgoAAAANSUhEUgAAAHAAAAA4CAYAAAAl63xKAAAABHNCSVQICAgIfAhkiAAAABl0RVh0U29mdHdhcmUAZ25vbWUtc2NyZWVuc2hvdO8Dvz4AAAAtdEVYdENyZWF0aW9uIFRpbWUARnJpIDA4IE1hciAyMDI0IDEwOjQ4OjU4IEFNIENFVHmib7gAAACdSURBVHic7dHBCQAgEMAwdf+dzyF8SCGZoNA9M7PIOr8DeGNgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxBsYZGGdgnIFxF0PVBGzyjItLAAAAAElFTkSuQmCC'
-    if True:
-        # plot elevation profile
-        rolling_elevation = gpx_df['Elevation'].rolling(3).mean()
-        gpx_df['Cumulative Distance'] = gpx_df['Distance'].cumsum() / 1000.
-
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(gpx_df['Cumulative Distance'], rolling_elevation, color='steelblue')
-
-        ax.set_ylabel('Elevation')
-        ax.set_xlabel('Distance [km]')
-        # ax.axes.xaxis.set_visible(False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-
-        # make the plot and convert it to base64
-        pic_IObytes = io.BytesIO()
-        plt.savefig(pic_IObytes, format='png', dpi=75)
-        plt.close()
-        pic_IObytes.seek(0)
-        pictureText = base64.b64encode(pic_IObytes.read()).decode()
-
-    # popup text
-    html = """
-        <h3>{}</h3>
-            <p style="font-family:'Courier New'" font-size=30px>
-                Date : {} <br>
-                Time : {} <br>
-                <a href="https://connect.garmin.com/modern/activity/{}" target="_blank">Activity</a>
-            </p>
-        <h4>{}</h4>
-            <p style="font-family:'Courier New'" font-size=30px>
-                Distance&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km <br>
-                Elevation Gain&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.0f} m <br>
-                Moving Time&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {} <br>
-                Average Speed&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.2f} km/h (maximum: {:.2f} km/h) <br>
-                Average Watts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp: {:.1f} W (maximum: {:.1f} W) <br>
-            </p>
-            <img src="data:image/png;base64,{}">
-        """.format(
-        matchingRow['Activity Name'][0],
-        activityStartTime.strftime("%d.%m.%Y"),
-        activityStartTime.strftime("%H:%M:%S"),
-        activityID, # row_values['id'],
-        type,
-        float(matchingRow['Distance (km)'][0]),
-        float(matchingRow['Elevation Gain (m)'][0]),
-        matchingRow['Moving Duration (h:m:s)'][0],
-        float(matchingRow['Average Speed (km/h)']),
-        float(matchingRow['Max. Speed (km/h)']),
-        0, 0,
-        pictureText
+    tour_info = RouteInfo(
+        matching_row['Activity Name'][0],
+        activityID,
+        'Garmin',
+        matching_row['Activity Parent'][0],
+        matching_row['Activity Type'][0],
+        datetime.datetime.fromisoformat(matching_row['Start Time'][0]),
+        points,
+        matching_row['Distance (km)'][0],
+        matching_row['Elevation Gain (m)'][0],
+        get_timedelta(matching_row['Elapsed Duration (h:m:s)'][0]),
+        matching_row['Average Speed (km/h)'][0],
+        matching_row['Max. Speed (km/h)'][0],
+        0, # avg watts
+        0, # max watts
     )
 
-    # add marker to map
-    icon = folium.Icon(color=settings['Ride']['color'],
-                       icon=settings['Ski']['icon'], icon_color="white", prefix='fa')
+    if not tour_info.process_tour():
+        print(f'\n{tour_info.get_debug_description()}: skipping as set as "not process"')
+        return
+    if not tour_info.line:
+        print(f'\n{tour_info.get_debug_description()}: skipping as no .gpx line found"')
+        return
 
-    # plot the activity
-    # if row_values['sport_type'] not in settings[type]['subcategories']:
-    #     settings[type]['subcategories'][row_values['sport_type']] = 0
-    l = folium.PolyLine(points, color=settings['Ride']['color'], popup=html,
-                        dash_array=settings['Ride']['subcategories']['Ride'])
+    if len(gpx_df) > 0: # plot elevation profile
+        rolling_elevation = gpx_df['Elevation'].rolling(3).mean()
+        gpx_df['Cumulative Distance'] = gpx_df['Distance'].cumsum() / 1000.
+        tour_info.gen_elevation_profile(rolling_elevation, gpx_df['Cumulative Distance'])
 
-    sports['Ride'].add_child(l)
-    marker = folium.Marker(location=halfway_coord, icon=icon)
-    markersGroup.add_child(marker)
+    sports[tour_info.activity_type].add_child(tour_info.gen_polyline())
+    markersGroup.add_child(tour_info.gen_marker())
 
-    # time.sleep(0.2)
+    time.sleep(0.2)
 
 
 def main(args):
@@ -427,6 +332,7 @@ def main(args):
         lambda: collections.defaultdict(lambda: collections.defaultdict(lambda: (0.0, 0.0))))
     gearMap = {}
 
+    # genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMap, gearMap)
     # genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports)
     genGarmin(sports, markersGroup)
 
