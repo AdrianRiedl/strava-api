@@ -18,7 +18,7 @@ settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
                      'subcategories': {'Walk': 0}},
             'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
                      'subcategories': {'Swim': 0}},
-            'Ski': {'color': 'orange', 'icon': 'person-skiing', 'process': True,
+            'Winter Sports': {'color': 'orange', 'icon': 'person-skiing', 'process': True,
                     'subcategories': {'Ski': 0}},
             }
 
@@ -27,6 +27,8 @@ garmin2stravaTypes = {
     'Road Cycling': 'Ride',
     'Gravel Cycling': 'GravelRide',
     'Mountain Biking': 'MountainBikeRide',
+    'Winter Sports': 'Winter Sports',
+    'Resort Skiing/Snowboarding': 'Ski',
 }
 
 popup_raw = """
@@ -93,10 +95,20 @@ class RouteInfo:
             self.activity_type = activity_type
             self.activity_subtype = activity_subtype
         elif activity_src == 'Garmin':
-            self.activity_type = garmin2stravaTypes[activity_type]
-            self.activity_subtype = garmin2stravaTypes[activity_subtype]
+            if activity_type == 'Any Activity Type':
+                if activity_subtype == 'Hiking':
+                    self.activity_type, self.activity_subtype = ('Hike', 'Hike')
+                elif activity_subtype == 'Cycling':
+                    self.activity_type, self.activity_subtype = ('Ride', 'Ride')
+            elif activity_type not in garmin2stravaTypes:
+                raise Exception(f'Unknown Activity Type: {activity_type}')
+            elif activity_subtype not in garmin2stravaTypes:
+                raise Exception(f'Unknown Activity Subtype: {activity_subtype}')
+            else:
+                self.activity_type = garmin2stravaTypes[activity_type]
+                self.activity_subtype = garmin2stravaTypes[activity_subtype]
         else:
-            raise f'Unknown Activity src: {activity_src}'
+            raise Exception(f'Unknown Activity src: {activity_src}')
 
 
     def get_moving_time_pretty(self):
@@ -147,6 +159,8 @@ class RouteInfo:
     def get_link(self):
         if self.activity_src == 'Strava':
             return f'https://www.strava.com/activities/{self.activity_id}'
+        elif self.activity_src == 'Garmin':
+            return f'https://connect.garmin.com/modern/activity/{self.activity_id}'
         else:
             return None
 

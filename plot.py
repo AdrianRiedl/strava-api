@@ -159,7 +159,7 @@ activityTypes = [subcat for details in settings.values() for subcat in details.g
 
 
 def genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMap, gearMap):
-    for row in tqdm(activities.iterrows(), desc="Plotting progress", total=activities.shape[0]):
+    for row in tqdm(activities.iterrows(), desc="Plotting progress [Strava]:", total=activities.shape[0]):
         row_values = row[1]
 
         # decode the polyline
@@ -195,7 +195,7 @@ def genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMa
             print(f'\n{tour_info.get_debug_description()}: skipping as set as "not process"')
             continue
         if not tour_info.line:
-            print(f'\n{tour_info.get_debug_description()}: skipping as no .gpx line found"')
+            print(f'\n{tour_info.get_debug_description()}: skipping as no .gpx file found"')
             continue
 
         # get the elevation
@@ -220,7 +220,6 @@ def genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMa
         markersGroup.add_child(tour_info.gen_marker())
 
         time.sleep(0.2)
-        break
 
 def parse_gpx(file_path):
     # parse gpx file to pandas dataframe
@@ -259,50 +258,52 @@ def get_timedelta(time_string):
     )
 
 def genGarmin(sports, markersGroup):
-    summaryCSV = '/home/stefan/data/arbeit/dev/strava-api-adrian/tmp/garmin-connect-export/2024-11-22_garmin_connect_export/activities.csv'
+    summaryCSV = 'garmin_connect_export/activities.csv'
     summaryDF = pd.read_csv(summaryCSV)
-    print(summaryDF)
-    print('-----------')
+    for record in tqdm(summaryDF.iterrows(), desc="Plotting progress [Garmin]: ", total=summaryDF.shape[0]):
+        id, record_info = record
+        activity_id = record_info['Activity ID']
+        activity_path = f'garmin_connect_export/activity_{activity_id}.gpx'
 
-    path = '/home/stefan/data/arbeit/dev/strava-api-adrian/tmp/garmin-connect-export/2024-11-22_garmin_connect_export/activity_17597667214.gpx'
-    activityID = 17597667214
+        if not os.path.exists(activity_path):
+            print(f"No .gpx found for activity {activity_id}")
+            continue
+        points, gpx_df = parse_gpx(activity_path)
 
-    points, gpx_df = parse_gpx(path)
-    matching_row = summaryDF.loc[summaryDF['Activity ID'] == activityID]
 
-    tour_info = RouteInfo(
-        matching_row['Activity Name'][0],
-        activityID,
-        'Garmin',
-        matching_row['Activity Parent'][0],
-        matching_row['Activity Type'][0],
-        datetime.datetime.fromisoformat(matching_row['Start Time'][0]),
-        points,
-        matching_row['Distance (km)'][0],
-        matching_row['Elevation Gain (m)'][0],
-        get_timedelta(matching_row['Elapsed Duration (h:m:s)'][0]),
-        matching_row['Average Speed (km/h)'][0],
-        matching_row['Max. Speed (km/h)'][0],
-        0, # avg watts
-        0, # max watts
-    )
+        tour_info = RouteInfo(
+            record_info['Activity Name'],
+            activity_id,
+            'Garmin',
+            record_info['Activity Parent'],
+            record_info['Activity Type'],
+            datetime.datetime.fromisoformat(record_info['Start Time']),
+            points,
+            record_info['Distance (km)'],
+            record_info['Elevation Gain (m)'],
+            get_timedelta(record_info['Duration (h:m:s)']),
+            record_info['Average Speed (km/h)'],
+            record_info['Max. Speed (km/h)'],
+            0, # avg watts
+            0, # max watts
+        )
 
-    if not tour_info.process_tour():
-        print(f'\n{tour_info.get_debug_description()}: skipping as set as "not process"')
-        return
-    if not tour_info.line:
-        print(f'\n{tour_info.get_debug_description()}: skipping as no .gpx line found"')
-        return
+        if not tour_info.process_tour():
+            print(f'\n{tour_info.get_debug_description()}: skipping as set as "not process"')
+            continue
+        if not tour_info.line:
+            print(f'\n{tour_info.get_debug_description()}: skipping as no .gpx line found"')
+            continue
 
-    if len(gpx_df) > 0: # plot elevation profile
-        rolling_elevation = gpx_df['Elevation'].rolling(3).mean()
-        gpx_df['Cumulative Distance'] = gpx_df['Distance'].cumsum() / 1000.
-        tour_info.gen_elevation_profile(rolling_elevation, gpx_df['Cumulative Distance'])
+        if len(gpx_df) > 0: # plot elevation profile
+            rolling_elevation = gpx_df['Elevation'].rolling(3).mean()
+            gpx_df['Cumulative Distance'] = gpx_df['Distance'].cumsum() / 1000.
+            tour_info.gen_elevation_profile(rolling_elevation, gpx_df['Cumulative Distance'])
 
-    sports[tour_info.activity_type].add_child(tour_info.gen_polyline())
-    markersGroup.add_child(tour_info.gen_marker())
+        sports[tour_info.activity_type].add_child(tour_info.gen_polyline())
+        markersGroup.add_child(tour_info.gen_marker())
 
-    time.sleep(0.2)
+        time.sleep(0.2)
 
 
 def main(args):
