@@ -52,15 +52,16 @@ access_token: str = authorize.get_acces_token()
 # download the data from the strava website
 def downloadStravaData():
     print("Downloading from Strava")
-    max_number_of_pages = 10
+
     data = list()
-    for page_number in tqdm(range(1, max_number_of_pages + 1)):
+    page_number = 1
+    while True:
         page_data = get_data(access_token, page=page_number)
+        page_number += 1
         if not page_data:
             break
         data.append(page_data)
 
-        # data dictionaries
     data_dictionaries = []
     for page in data:
         data_dictionaries.extend(page)
@@ -150,16 +151,15 @@ def filterActivities(activities, sinceDate, untilDate, activityTypes):
 
 
 # color scheme
-settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
-                     'subcategories': {'Ride': 0, 'GravelRide': 10, 'MountainBikeRide': 20}},
-            'Run': {'color': 'green', 'icon': 'person', 'process': True,
-                    'subcategories': {'Run': 0}},
-            'Hike': {'color': 'purple', 'icon': 'person', 'process': True,
-                     'subcategories': {'Hike': 0}},
-            'Walk': {'color': 'purple', 'icon': 'person', 'process': True,
-                     'subcategories': {'Walk': 0}},
-            'Swim': {'color': 'blue', 'icon': 'water', 'process': True,
-                     'subcategories': {'Swim': 0}}}
+settings = {
+    'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
+             'subcategories': {'Ride': 0, 'GravelRide': 10, 'MountainBikeRide': 20}},
+    'VirtualRide': {'color': 'red', 'icon': 'bicycle', 'process': True, 'subcategories': {'Ride': 0}},
+    'Run': {'color': 'green', 'icon': 'person', 'process': True, 'subcategories': {'Run': 0}},
+    'Hike': {'color': 'purple', 'icon': 'person', 'process': True, 'subcategories': {'Hike': 0}},
+    'Walk': {'color': 'purple', 'icon': 'person', 'process': True, 'subcategories': {'Walk': 0}},
+    'Swim': {'color': 'blue', 'icon': 'water', 'process': True, 'subcategories': {'Swim': 0}},
+    'NordicSki': {'color': 'lightblue', 'icon': 'ski', 'process': True, 'subcategories': {'NordicSki': 0}}}
 
 # get the available subcategories
 activityTypes = [subcat for details in settings.values() for subcat in details.get('subcategories', {}).keys()]
@@ -210,7 +210,7 @@ def main(args):
                 gearMap[gear] = get_gear(access_token, gear)
 
         # option to skip specific activity types
-        if not settings[type]['process']:
+        if type not in settings or not settings[type]['process']:
             print(f"\n{row_values['id']} {row_values['name']} {type}: skipping as not process set")
             continue
         # decode the polyline
