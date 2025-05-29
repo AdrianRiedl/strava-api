@@ -31,3 +31,7 @@ urllib3==2.2.2
 wheel==0.43.0
 xyzservices==2024.6.0
 tabulate
+
+gpxpy
+pydantic
+haversine
