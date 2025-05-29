@@ -20,6 +20,8 @@ settings = {'Ride': {'color': 'red', 'icon': 'bicycle', 'process': True,
                      'subcategories': {'Swim': 0}},
             'Winter Sports': {'color': 'orange', 'icon': 'person-skiing', 'process': True,
                     'subcategories': {'Ski': 0}},
+            'AlpineSki': {'color': 'orange', 'icon': 'person-skiing', 'process': True,
+                              'subcategories': {'Ski': 0}},
             }
 
 garmin2stravaTypes = {
