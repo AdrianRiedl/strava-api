@@ -157,7 +157,6 @@ def filterActivities(activities, sinceDate, untilDate, activityTypes):
 # get the available subcategories
 activityTypes = [subcat for details in settings.values() for subcat in details.get('subcategories', {}).keys()]
 
-
 def genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMap, gearMap):
     for row in tqdm(activities.iterrows(), desc="Plotting progress [Strava]:", total=activities.shape[0]):
         row_values = row[1]
@@ -230,19 +229,22 @@ def parse_gpx(file_path):
     for track in gpx.tracks:
         for segment in track.segments:
             for point_idx, point in enumerate(segment.points):
-                points.append(tuple([point.latitude, point.longitude]))
-
+                appendPoint = False
                 # calculate distances between points
                 if point_idx == 0:
                     distance = float('NaN')
+                    appendPoint = True
                 else:
                     distance = hs.haversine(
-                        point1=points[point_idx-1],
-                        point2=points[point_idx],
+                        point1=points[-1],
+                        point2=tuple([point.latitude, point.longitude]),
                         unit=hs.Unit.METERS
                     )
-
-                data.append([point.longitude, point.latitude,point.elevation, point.time, segment.get_speed(point_idx), distance])
+                    if distance > 100 or point_idx == len(segment.points)-1:
+                        appendPoint = True
+                if appendPoint:
+                    points.append(tuple([point.latitude, point.longitude]))
+                    data.append([point.longitude, point.latitude,point.elevation, point.time, segment.get_speed(point_idx), distance])
 
     columns = ['Longitude', 'Latitude', 'Elevation', 'Time', 'Speed', 'Distance']
     gpx_df = pd.DataFrame(data, columns=columns)
@@ -333,7 +335,7 @@ def main(args):
         lambda: collections.defaultdict(lambda: collections.defaultdict(lambda: (0.0, 0.0))))
     gearMap = {}
 
-    # genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMap, gearMap)
+    genStravaWithClass(activities, markersGroup, sports, gearDistanceElevationMap, gearMap)
     # genStrava(activities, markersGroup, gearDistanceElevationMap, gearMap, elevation_profile, sports)
     genGarmin(sports, markersGroup)
 
@@ -384,7 +386,7 @@ def main(args):
 
     for gear, l in gearToTable.items():
         text += "------------------------------------------------------------------------\n"
-        text += f"For {gearMap[gear]["nickname"]}:\n"
+        text += f"For {gearMap[gear]['nickname']}:\n"
         yearMap = collections.defaultdict(lambda: (0.0, 0.0))
         for e in l:
             year = e[0]
